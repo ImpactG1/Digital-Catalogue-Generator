@@ -1,0 +1,8 @@
+{
+  "gradio_endpoint_url": "https://d2963a9a901fe1a4e2.gradio.live",
+  "default_template": "Empty Template.png",
+  "output_directory": "output",
+  "warmth": 1.0,
+  "scale_factor": 1.0,
+  "y_offset": 0
+}
