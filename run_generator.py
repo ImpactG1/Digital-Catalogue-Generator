@@ -1,6 +1,7 @@
 """
 Digital Catalogue Generator - CLI
 Command line interface for generating luxury catalogue pages autonomously.
+Supports local physics-based rendering, multi-image Colab Qwen 2.1 inference, and fast relighting.
 """
 
 import os
@@ -16,8 +17,7 @@ def find_image_files(directory: str) -> List[str]:
     files = []
     for f in sorted(os.listdir(directory)):
         if os.path.splitext(f)[1].lower() in valid_exts:
-            # Skip templates or outputs
-            if "template" not in f.lower() and "output" not in f.lower() and "sample" not in f.lower():
+            if "template" not in f.lower() and "output" not in f.lower() and "sample" not in f.lower() and "master" not in f.lower():
                 files.append(os.path.join(directory, f))
     return files
 
@@ -35,7 +35,7 @@ def main():
     parser.add_argument(
         "--products",
         nargs="+",
-        help="List of product image files to place onto the template (e.g. 'Product 1.jpeg' 'Product 2.jpeg' ...)"
+        help="List of product image files to place onto the template"
     )
     parser.add_argument(
         "--products-dir",
@@ -45,8 +45,8 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="Catalogue_Output.png",
-        help="Path to save the resulting catalogue image (default: 'Catalogue_Output.png')"
+        default="Luxury_Catalogue_Master.png",
+        help="Path to save the resulting catalogue image (default: 'Luxury_Catalogue_Master.png')"
     )
     parser.add_argument(
         "--output-dir",
@@ -82,16 +82,20 @@ def main():
         type=str,
         help="Set or update Google Colab Gradio Live Endpoint URL"
     )
+    parser.add_argument(
+        "--colab-mode",
+        choices=["local", "qwen-multi", "qwen-relight"],
+        default="local",
+        help="Engine mode: 'local' (fast local physics engine), 'qwen-multi' (Colab Qwen multi-image inpainting), or 'qwen-relight' (Colab AI relighting)"
+    )
 
     args = parser.parse_args()
 
-    # Configure Colab endpoint if provided
     bridge = ColabGradioBridge()
     if args.gradio_url:
         print(f"Setting Colab Gradio endpoint to: {args.gradio_url}")
         bridge.set_endpoint(args.gradio_url)
 
-    # Collect product images
     product_files = []
     if args.products:
         product_files = args.products
@@ -101,7 +105,6 @@ def main():
             sys.exit(1)
         product_files = find_image_files(args.products_dir)
     else:
-        # Default auto-discovery in current directory
         product_files = find_image_files(".")
 
     if not product_files:
@@ -112,7 +115,20 @@ def main():
     for idx, p in enumerate(product_files, 1):
         print(f"  {idx}. {os.path.basename(p)}")
 
-    print(f"[Info] Initializing compositor with template: {args.template}...")
+    # Engine Execution
+    if args.colab_mode == "qwen-multi" and bridge.is_connected:
+        print("[Info] Calling Google Colab Qwen 2.1 Multi-Image Inpainting endpoint...")
+        qwen_img = bridge.generate_catalogue_multi(
+            template_path=args.template,
+            product_paths=product_files[:4]
+        )
+        if qwen_img:
+            qwen_img.save(args.output, quality=95)
+            print(f"[Done] Generated catalogue saved to: {args.output}")
+            return
+        else:
+            print("[Warning] Colab multi-image call failed or endpoint not updated. Falling back to local engine...")
+
     compositor = PhotorealisticCompositor(template_path=args.template)
 
     if args.batch or len(product_files) > 4:
@@ -126,15 +142,23 @@ def main():
         )
         print(f"[Done] Generated {len(results)} catalogue page(s) in '{args.output_dir}/'")
     else:
-        print(f"[Info] Generating catalogue page for up to 4 products...")
+        print(f"[Info] Generating catalogue page with marble reflections and contact shadows...")
         page_img = compositor.generate_page(
-            product_images=product_files,
+            product_images=product_files[:4],
             scale_factor=args.scale,
             y_offset=args.y_offset,
             warmth=args.warmth
         )
         page_img.save(args.output, quality=95)
         print(f"[Done] Generated catalogue saved to: {args.output}")
+
+        if args.colab_mode == "qwen-relight" and bridge.is_connected:
+            print("[Info] Passing generated layout into Colab for fast AI studio relighting...")
+            relit_img = bridge.relight_composite(args.output)
+            if relit_img:
+                relit_path = args.output.replace(".png", "_relit.png")
+                relit_img.save(relit_path, quality=95)
+                print(f"[Done] AI relit catalogue saved to: {relit_path}")
 
 
 if __name__ == "__main__":
